@@ -39,9 +39,7 @@ public class AuctionQueryControl {
     }
 
     public List<Bid> getBidsForAuction(String auctionId) {
-        return store.bids().stream()
-                .filter(bid -> bid.belongsToAuction(auctionId))
-                .toList();
+        return store.findBidsByAuction(auctionId);
     }
 }
 

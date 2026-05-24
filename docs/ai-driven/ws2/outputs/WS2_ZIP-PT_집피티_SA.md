@@ -4,257 +4,118 @@
 
 - 대상 시스템: 집피티(ZIP-PT)
 - 단계: Part C Specification Augmentation
-- 선택한 추가 명세 유형: Data Dictionary
+- 선택한 추가 명세 유형: 비기능 요구사항(NFR)
 - 연결 대상:
-  - L3 Static Modeling의 Entity Class/Attribute
-  - L4 Object Structuring의 Entity Operation/Validation Operation
+  - L3 Static Modeling의 `Property`, `Bid`, `Auction`, `Buyer` Entity
+  - L4 Object Structuring의 `SearchPropertyManager`, `AuctionQueryControl`, `DataStore`, Client UI 흐름
 
-### 0.1 Data Dictionary를 선택한 이유
+### 0.1 NFR을 선택한 이유
 
-L3 Static Modeling은 Entity Class와 속성 타입을 정의했지만, 각 속성의 의미, 허용 범위, 형식, 검증 실패 조건까지는 충분히 고정하지 않았다. Data Dictionary를 추가하면 AI 코드 생성 시 다음 변화가 관찰될 수 있다.
+L3+L4 산출물은 도메인 객체와 Client/Server 책임을 분리했지만, 검색 응답성, 조회 효율, 입력 오류 복구, 처리 결과 추적 같은 품질 조건은 충분히 구체화하지 않았다.
 
-- `String`, `Decimal`, `datetime` 속성에 대한 구체적 validation 코드 생성
-- enum 값과 상태 전이 조건의 명확화
-- 입력 DTO/Command와 Entity Operation의 검증 책임 강화
-- L3+L4 코드 대비 예외 처리와 오류 메시지의 구체화
+Part C에서는 새 기능을 추가하기보다, 기존 L3+L4 구조 안에서 다음 질문을 관찰한다.
 
-따라서 Part C에서는 Data Dictionary를 통해 "추가 명세가 AI 코드 생성 품질에 관찰 가능한 차이를 만드는가"를 확인한다.
+> 비기능 요구사항을 추가하면 AI 생성 코드는 단순 기능 구현을 넘어 저장 구조, 조회 방식, UI 입력 흐름, 처리 로그 구조를 다르게 생성하는가?
 
 ---
 
-## 1. 공통 데이터 규칙
+## 1. 추가 비기능 요구사항
 
-| 규칙 ID | 대상 | 규칙 | 코드 반영 기대 |
-|---|---|---|---|
-| DR-001 | 모든 `String` ID | null/blank 금지, 영문 prefix + UUID 또는 시스템 발급 문자열 | 생성자/팩토리에서 ID 검증 |
-| DR-002 | 모든 금액 `Decimal` | 음수 금지, 통화 단위 값은 소수점 2자리 이내 | `BigDecimal.signum()` 및 scale 검증 |
-| DR-003 | 모든 비율 `Decimal` | 0 이상 100 이하 | 수수료율/가중치 validation |
-| DR-004 | 모든 `datetime` | 과거 시각 금지 여부를 속성별로 명시 | deadline/visitAt 검증 분리 |
-| DR-005 | 모든 enum | 정의되지 않은 문자열 입력 금지 | 문자열 파싱 시 enum 변환 실패 처리 |
-| DR-006 | 사용자 입력 텍스트 | 앞뒤 공백 제거 후 길이 검증 | trim + min/max length 검증 |
+| ID | 분류 | 요구사항 | L3/L4 연결 지점 | 코드 반영 기대 |
+|---|---|---|---|---|
+| NFR-P1 | 성능 | 지역 조건 매물 검색은 전체 매물 목록을 매번 순회하지 않고 지역별 조회 구조를 사용할 수 있어야 한다. | `Property.region`, `SearchPropertyManager`, `DataStore` | `propertiesByRegion`, `findPropertyIdsByRegion()` |
+| NFR-P2 | 성능 | 특정 경매의 입찰 목록과 특정 중개사의 입찰 이력은 전체 Bid 목록 순회 없이 식별자 기준으로 조회할 수 있어야 한다. | `Bid.auctionId`, `Bid.agentId`, `AuctionQueryControl`, `DataStore` | `bidsByAuction`, `bidsByAgent`, `findBidsByAuction()` |
+| NFR-U1 | 사용성 | 콘솔 입력에서 잘못된 값이 들어와도 프로그램은 종료되지 않고, 오류 사유를 안내한 뒤 같은 단계에서 재입력을 받을 수 있어야 한다. | `client.ui`, `client.control` | `ConsoleInputReader`, 입력 retry 정책 |
+| NFR-O1 | 관찰가능성 | 주요 유스케이스 실행 결과는 operationName, actorId, targetId, result, elapsedTime으로 추적할 수 있어야 한다. | `SearchPropertyManager`, `DataStore` | `OperationLog`, `operationLogs()` |
 
 ---
 
-## 2. Entity별 Data Dictionary
+## 2. L3+L4 대비 기대 변화
 
-### 2.1 User
+### 2.1 매물 검색 응답성
 
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| userId | String | 사용자 식별자 | 필수, `user-` prefix 권장, 중복 금지 | USER_ID_INVALID |
-| name | String | 사용자 표시 이름 | 필수, 2~30자 | USER_NAME_INVALID |
-| email | String | 로그인/연락 이메일 | 필수, 이메일 형식, 중복 금지 | USER_EMAIL_INVALID |
-| passwordHash | String | 해시된 비밀번호 | 필수, 평문 저장 금지 | USER_PASSWORD_HASH_INVALID |
-| role | UserRole | 사용자 역할 | BUYER/SELLER/AGENT 중 하나 | USER_ROLE_INVALID |
-| authStatus | AuthStatus | 인증 세션 상태 | LOGGED_IN 상태에서만 보호 기능 접근 가능 | USER_AUTH_INVALID |
-
-### 2.2 AgentCredential
-
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| credentialId | String | 자격 증명 식별자 | 필수, 중복 금지 | CREDENTIAL_ID_INVALID |
-| agentId | String | 공인중개사 사용자 ID | 필수, Agent 사용자와 연결되어야 함 | CREDENTIAL_AGENT_INVALID |
-| licenseNumber | String | 공인중개사 자격증 번호 | 필수, 대문자/숫자/하이픈만 허용, 6~30자 | LICENSE_NUMBER_INVALID |
-| officeRegistrationNumber | String | 사무소 등록번호 | 필수, 대문자/숫자/하이픈만 허용, 6~30자 | OFFICE_REG_NO_INVALID |
-| verifiedAt | datetime | 검증 완료 시각 | VERIFIED 상태일 때 필수 | CREDENTIAL_VERIFIED_AT_INVALID |
-| status | CredentialStatus | 자격 검증 상태 | VERIFIED 상태에서만 입찰 가능 | CREDENTIAL_STATUS_INVALID |
-
-### 2.3 Property
-
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| propertyId | String | 매물 식별자 | 필수, `property-` prefix 권장 | PROPERTY_ID_INVALID |
-| sellerId | String | 매도자 ID | 필수, Seller 사용자와 연결되어야 함 | PROPERTY_SELLER_INVALID |
-| address | String | 상세 주소 | 필수, 5~120자 | PROPERTY_ADDRESS_INVALID |
-| region | String | 검색/분석 지역 | 필수, 2~30자 | PROPERTY_REGION_INVALID |
-| areaSquareMeter | Decimal | 전용/공급 면적 | 0보다 커야 함 | PROPERTY_AREA_INVALID |
-| askingPrice | Decimal | 희망 매도가 | 0보다 커야 함, 소수점 2자리 이내 | PROPERTY_PRICE_INVALID |
-| propertyType | PropertyType | 매물 유형 | enum 값 필수 | PROPERTY_TYPE_INVALID |
-| description | String | 매물 설명 | 선택, 최대 1000자 | PROPERTY_DESC_TOO_LONG |
-| status | PropertyStatus | 매물 상태 | SOLD 상태에서는 신규 경매 등록 불가 | PROPERTY_STATUS_INVALID |
-
-### 2.4 Auction
-
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| auctionId | String | 경매 공고 식별자 | 필수, `auction-` prefix 권장 | AUCTION_ID_INVALID |
-| propertyId | String | 대상 매물 ID | 필수, 동일 매물에 OPEN 경매 중복 금지 | AUCTION_PROPERTY_INVALID |
-| sellerId | String | 공고 등록 매도자 ID | 필수, 대상 매물 소유자와 일치 | AUCTION_SELLER_INVALID |
-| status | AuctionStatus | 경매 상태 | DRAFT -> OPEN -> CLOSED/PENDING_WINNER -> WINNER_SELECTED/CANCELLED 전이만 허용 | AUCTION_STATUS_INVALID |
-| bidDeadline | datetime | 입찰 마감 시각 | 현재 시각보다 최소 1시간 이후, 최대 90일 이내 | AUCTION_DEADLINE_INVALID |
-| bidCount | int | 접수된 입찰 수 | 0 이상, Bid 생성/취소와 일관성 유지 | AUCTION_BID_COUNT_INVALID |
-| selectedBidId | String | 낙찰 입찰 ID | WINNER_SELECTED 상태에서 필수 | AUCTION_SELECTED_BID_INVALID |
-
-### 2.5 AuctionCondition
-
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| auctionConditionId | String | 공고 조건 식별자 | 필수 | AUCTION_CONDITION_ID_INVALID |
-| auctionId | String | 연결 경매 ID | 필수 | AUCTION_CONDITION_AUCTION_INVALID |
-| serviceCondition | String | 매도자가 요구하는 서비스 조건 | 필수, 10~500자 | AUCTION_SERVICE_CONDITION_INVALID |
-| minQualification | String | 최소 자격 요건 | 필수, 5~300자 | AUCTION_MIN_QUAL_INVALID |
-| bidDeadline | datetime | 입찰 마감 시각 | Auction.bidDeadline과 동일해야 함 | AUCTION_CONDITION_DEADLINE_INVALID |
-
-### 2.6 WinnerSelectionCriteria
-
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| criteriaId | String | 낙찰 기준 식별자 | 필수 | CRITERIA_ID_INVALID |
-| auctionId | String | 연결 경매 ID | 필수 | CRITERIA_AUCTION_INVALID |
-| priorityType | WinnerPriorityType | 낙찰 우선 유형 | PRICE_FIRST/SERVICE_FIRST/BALANCED 중 하나 | CRITERIA_PRIORITY_INVALID |
-| commissionRateWeight | Decimal | 수수료율 가중치 | 0 이상 1 이하 | CRITERIA_COMMISSION_WEIGHT_INVALID |
-| marketingStrategyWeight | Decimal | 마케팅 전략 가중치 | 0 이상 1 이하 | CRITERIA_MARKETING_WEIGHT_INVALID |
-
-추가 불변식:
+L3+L4 baseline:
 
 ```text
-commissionRateWeight + marketingStrategyWeight = 1.0
+store.properties().stream()
+    .filter(property -> region.equals(property.getRegion()))
 ```
 
-코드 반영 기대:
-
-- L3+L4 코드의 `validateWeights()`가 "0보다 큰 합계" 수준에서 "합계가 1.0인지" 검증하는 방향으로 강화된다.
-- `priorityType`에 따라 최소 가중치 조건을 추가할 수 있다.
-  - PRICE_FIRST: commissionRateWeight >= 0.6
-  - SERVICE_FIRST: marketingStrategyWeight >= 0.6
-  - BALANCED: 각 가중치 0.4~0.6
-
-### 2.7 Bid
-
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| bidId | String | 입찰서 식별자 | 필수, `bid-` prefix 권장 | BID_ID_INVALID |
-| auctionId | String | 대상 경매 ID | 필수, OPEN 상태 경매만 가능 | BID_AUCTION_INVALID |
-| agentId | String | 제출 공인중개사 ID | 필수, VERIFIED 자격 상태 필요 | BID_AGENT_INVALID |
-| submittedAt | datetime | 제출 시각 | bidDeadline 이전이어야 함 | BID_SUBMITTED_AT_INVALID |
-| status | BidStatus | 입찰 상태 | DRAFT -> SUBMITTED/RESUBMIT_ALLOWED -> WON/LOST/CANCELLED | BID_STATUS_INVALID |
-| receiptNumber | String | 접수번호 | 제출 완료 시 필수, 중복 금지 | BID_RECEIPT_INVALID |
-| isResubmitted | bool | 재제출 여부 | 재제출 시 기존 receiptNumber 유지 | BID_RESUBMIT_INVALID |
-
-추가 불변식:
+SA 적용 후:
 
 ```text
-동일 auctionId + agentId 조합에 대해 SUBMITTED/WON/LOST 상태 Bid는 최대 1건
+propertiesByRegion.computeIfAbsent(region, ...).add(property)
+findPropertyIdsByRegion(region)
 ```
 
-### 2.8 BidProposal
+의미:
 
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| bidProposalId | String | 입찰 제안 식별자 | 필수 | BID_PROPOSAL_ID_INVALID |
-| bidId | String | 연결 입찰서 ID | 필수 | BID_PROPOSAL_BID_INVALID |
-| commissionRate | Decimal | 제안 수수료율 | 0 이상 10 이하, 소수점 2자리 이내 | BID_COMMISSION_RATE_INVALID |
-| marketingStrategy | String | 마케팅 전략 | 필수, 20~1000자 | BID_MARKETING_STRATEGY_INVALID |
-| expectedSalePeriodDays | int | 예상 매각 기간 | 1~365일 | BID_EXPECTED_PERIOD_INVALID |
-| serviceTerms | String | 서비스 조건 | 필수, 10~500자 | BID_SERVICE_TERMS_INVALID |
+- L3+L4는 `Property`와 `SearchPropertyManager`를 분리했지만, 검색 방식은 전체 순회에 머문다.
+- SA는 "검색 응답성"을 명시하여 `DataStore`가 조회 인덱스를 함께 유지하도록 만든다.
 
-코드 반영 기대:
+### 2.2 경매별 입찰 조회 효율
 
-- L3+L4 코드의 `validateCommissionRate()`는 현재 0~100 범위인데, SA 적용 후 0~10으로 강화된다.
-- `marketingStrategy`, `serviceTerms`는 단순 blank 검증에서 최소/최대 길이 검증으로 강화된다.
-
-### 2.9 Reservation
-
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| reservationId | String | 예약 식별자 | 필수, `reservation-` prefix 권장 | RESERVATION_ID_INVALID |
-| buyerId | String | 방문 요청 매수자 ID | 필수, Buyer 사용자와 연결 | RESERVATION_BUYER_INVALID |
-| propertyId | String | 방문 대상 매물 ID | 필수, INACTIVE/SOLD 매물 예약 불가 | RESERVATION_PROPERTY_INVALID |
-| agentId | String | 담당 중개사 ID | 필수, VERIFIED 자격 상태 필요 | RESERVATION_AGENT_INVALID |
-| requestedAt | datetime | 예약 요청 시각 | 시스템 시각으로 자동 생성 | RESERVATION_REQUESTED_AT_INVALID |
-| visitAt | datetime | 방문 예정 시각 | 현재 시각보다 이후, 최대 60일 이내 | RESERVATION_VISIT_AT_INVALID |
-| status | ReservationStatus | 예약 상태 | PENDING -> CONFIRMED -> VISITED -> REVIEWED 전이만 허용, REJECTED/CANCELLED는 종료 상태 | RESERVATION_STATUS_INVALID |
-
-추가 불변식:
+L3+L4 baseline:
 
 ```text
-동일 agentId + visitAt 조합에 CONFIRMED/PENDING 예약은 최대 1건
+store.bids().stream()
+    .filter(bid -> bid.belongsToAuction(auctionId))
 ```
 
-### 2.10 Review
-
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| reviewId | String | 후기 식별자 | 필수, `review-` prefix 권장 | REVIEW_ID_INVALID |
-| reservationId | String | 연결 예약 ID | 필수, VISITED 상태 예약만 가능 | REVIEW_RESERVATION_INVALID |
-| buyerId | String | 후기 작성 매수자 ID | 예약의 buyerId와 일치해야 함 | REVIEW_BUYER_INVALID |
-| agentId | String | 평가 대상 중개사 ID | 예약의 agentId와 일치해야 함 | REVIEW_AGENT_INVALID |
-| propertyId | String | 방문 매물 ID | 예약의 propertyId와 일치해야 함 | REVIEW_PROPERTY_INVALID |
-| rating | int | 별점 | 1~5 정수 | REVIEW_RATING_INVALID |
-| text | String | 후기 본문 | 필수, 10~1000자 | REVIEW_TEXT_INVALID |
-| createdAt | datetime | 작성 시각 | 시스템 시각으로 자동 생성 | REVIEW_CREATED_AT_INVALID |
-
-추가 불변식:
+SA 적용 후:
 
 ```text
-하나의 reservationId에 Review는 최대 1건
+bidsByAuction.computeIfAbsent(auctionId, ...).add(bid)
+findBidsByAuction(auctionId)
 ```
 
-### 2.11 Notification
+의미:
 
-| 속성 | 타입 | 의미 | 제약 조건 | 오류 코드 |
-|---|---|---|---|---|
-| notificationId | String | 알림 식별자 | 필수, `noti-` prefix 권장 | NOTIFICATION_ID_INVALID |
-| receiverUserId | String | 수신 사용자 ID | 필수, 존재하는 User와 연결 | NOTIFICATION_RECEIVER_INVALID |
-| notificationType | NotificationType | 알림 유형 | enum 값 필수 | NOTIFICATION_TYPE_INVALID |
-| message | String | 알림 메시지 | 필수, 5~300자 | NOTIFICATION_MESSAGE_INVALID |
-| createdAt | datetime | 생성 시각 | 시스템 시각으로 자동 생성 | NOTIFICATION_CREATED_AT_INVALID |
-| readAt | datetime | 읽음 시각 | READ 상태일 때만 필수 | NOTIFICATION_READ_AT_INVALID |
-| status | NotificationStatus | 알림 상태 | UNREAD -> READ 또는 FAILED | NOTIFICATION_STATUS_INVALID |
+- L3+L4는 `AuctionQueryControl`을 만들었지만, 조회 비용에 대한 정책은 없다.
+- SA는 `auctionId`, `agentId`가 단순 속성이 아니라 조회 기준이라는 점을 명시한다.
+
+### 2.3 콘솔 입력 오류 복구성
+
+L3+L4 baseline:
+
+```text
+Integer.parseInt(input)
+// 잘못된 입력이면 NumberFormatException 발생
+```
+
+SA 적용 후:
+
+```text
+ConsoleInputReader.readIntWithRetry("평점", inputs, 1, 5)
+```
+
+의미:
+
+- 새 기능을 추가하는 것이 아니라 기존 콘솔 입력 흐름의 실패 처리를 구체화한다.
+- 사용자는 잘못된 값을 입력해도 같은 단계에서 다시 시도할 수 있다.
+
+### 2.4 처리 결과 관찰가능성
+
+L3+L4 baseline:
+
+```text
+검색 결과만 반환
+```
+
+SA 적용 후:
+
+```text
+OperationLog("SEARCH_PROPERTY", buyerId, region, "SUCCESS(...)", elapsedNanos)
+```
+
+의미:
+
+- 기능 결과뿐 아니라 어떤 작업이 어떤 대상에 대해 수행되었는지 추적할 수 있다.
+- 발표에서는 `operationLogs().size()`와 로그 필드로 SA 적용 여부를 확인할 수 있다.
 
 ---
 
-## 3. Use Case별 추가 검증 규칙
-
-### 3.1 Register Auction
-
-| 단계 | 추가 규칙 | 관련 Data Dictionary |
-|---|---|---|
-| 공고 대상 매물 선택 | 매물은 Seller 소유여야 하며 SOLD/INACTIVE 상태가 아니어야 함 | Property.sellerId, Property.status |
-| 공고 조건 입력 | serviceCondition 10~500자, minQualification 5~300자 | AuctionCondition |
-| 입찰 마감 기한 입력 | 현재 시각 + 1시간 이후, 90일 이내 | Auction.bidDeadline |
-| 낙찰 기준 설정 | 가중치 합계 1.0, priorityType별 최소 가중치 충족 | WinnerSelectionCriteria |
-| 공고 등록 확정 | 동일 propertyId에 OPEN 경매가 없어야 함 | Auction.propertyId/status |
-
-### 3.2 Submit Bid
-
-| 단계 | 추가 규칙 | 관련 Data Dictionary |
-|---|---|---|
-| 공고 선택 | 경매 상태 OPEN, 제출 시각이 bidDeadline 이전 | Auction.status, Auction.bidDeadline |
-| 공인중개사 검증 | AgentCredential.status가 VERIFIED | AgentCredential |
-| 입찰서 작성 | commissionRate 0~10, marketingStrategy 20~1000자, serviceTerms 10~500자 | BidProposal |
-| 최종 제출 | 동일 auctionId + agentId 활성 입찰 최대 1건 | Bid |
-| 재제출 | 기존 receiptNumber 유지, isResubmitted = true | Bid |
-
-### 3.3 Select Winner
-
-| 단계 | 추가 규칙 | 관련 Data Dictionary |
-|---|---|---|
-| 마감 공고 선택 | CLOSED 또는 PENDING_WINNER 상태만 가능 | Auction.status |
-| 입찰서 목록 표시 | BidStatus.SUBMITTED 입찰만 후보 | Bid.status |
-| 기준 적용 정렬 | WinnerSelectionCriteria.calculateBidScore() 사용 | WinnerSelectionCriteria, BidProposal |
-| 낙찰 확정 | selectedBidId는 해당 auctionId의 Bid여야 함 | Bid.auctionId |
-| 결과 반영 | 선택 Bid는 WON, 나머지는 LOST, Auction은 WINNER_SELECTED | Bid.status, Auction.status |
-
----
-
-## 4. L3+L4 코드 대비 관찰 가능한 변화 예상
-
-| 비교 항목 | L3+L4 코드 | L3+L4+SA 코드 기대 변화 |
-|---|---|---|
-| 수수료율 검증 | `BidProposal.validateCommissionRate()`가 0~100 범위 | 0~10 범위, 소수점 2자리 검증 |
-| 낙찰 기준 검증 | `validateWeights()`가 0보다 큰 합계 정도 검증 | 합계 1.0, priorityType별 최소 가중치 검증 |
-| 텍스트 입력 검증 | blank 검증 중심 | 최소/최대 길이 검증 추가 |
-| 자격증 번호 검증 | VERIFIED 상태 중심 | licenseNumber/officeRegistrationNumber 형식 검증 추가 |
-| 예약 검증 | 구조만 존재 | agentId + visitAt 중복 예약 방지 규칙 강화 |
-| 후기 검증 | rating 1~5 검증 중심 | VISITED 예약 여부, 예약당 후기 1건 검증 추가 |
-| 오류 표현 | `IllegalArgumentException` 중심 | 오류 코드 enum 또는 도메인별 ValidationException 생성 가능 |
-
----
-
-## 5. SA 적용 프롬프트
-
-다음 단계에서 L3+L4+SA 코드를 생성할 때 사용할 프롬프트는 아래와 같다.
+## 3. SA 적용 프롬프트
 
 ```text
 너는 COMET UML 기반 AI-Driven 개발 방법론의 L3+L4+Specification Augmentation 단계에 따라 Java 코드를 생성한다.
@@ -262,32 +123,91 @@ commissionRateWeight + marketingStrategyWeight = 1.0
 입력 산출물:
 1. L3 Static Modeling 문서
 2. L4 Object Structuring 문서
-3. Specification Augmentation - Data Dictionary 문서
+3. Specification Augmentation - NFR 문서
 
 요구사항:
 - 기존 L3+L4 코드 구조(client/common/server)는 유지한다.
-- Data Dictionary의 제약 조건을 Entity 생성자, Entity Operation, Transaction Manager validation에 반영한다.
-- 단순 null/blank 검증을 넘어 범위, 길이, enum, 상태 전이, 중복 제약을 코드로 구현한다.
-- 검증 실패는 공통 ValidationErrorCode 또는 도메인별 ValidationException으로 표현한다.
-- Register Auction, Submit Bid, Select Winner에서 Data Dictionary 규칙이 실제로 호출되도록 연결한다.
-- 동시성 경계는 L4와 동일하게 auctionId/propertyId/agentId+visitAt/reservationId 단위 lock을 사용한다.
-- 외부 프레임워크 없이 순수 Java로 작성한다.
+- 새 유스케이스를 추가하지 않고, 기존 검색/조회/입력/처리 추적 흐름에 비기능 요구사항을 반영한다.
+- NFR-P1: 지역 조건 매물 검색은 전체 매물 순회 대신 지역별 인덱스 조회를 사용할 수 있게 한다.
+- NFR-P2: 경매별/중개사별 입찰 조회는 auctionId/agentId 인덱스 조회를 사용할 수 있게 한다.
+- NFR-U1: 콘솔 입력 오류는 프로그램 종료가 아니라 같은 단계 재입력으로 복구한다.
+- NFR-O1: 주요 유스케이스 성공/실패 결과는 OperationLog로 기록한다.
+- 외부 DB나 프레임워크를 추가하지 않고 순수 Java in-memory 구조로 차이를 관찰할 수 있게 한다.
 
 관찰 목표:
-- L3+L4 코드 대비 validation 코드가 구체화되는지 확인한다.
-- `WinnerSelectionCriteria`, `BidProposal`, `AuctionCondition`, `AgentCredential`, `Reservation`, `Review`의 검증 책임이 강화되는지 확인한다.
-- 오류 원인이 명확한 코드/예외로 분리되는지 확인한다.
+- L3+L4 코드 대비 전체 순회가 인덱스 조회로 바뀌는지 확인한다.
+- 같은 테스트 데이터에서 L3+L4와 SA의 검색/조회 시간이 콘솔에 비교 출력되는지 확인한다.
+- 입력 오류 복구와 처리 로그가 코드 구조로 분리되는지 확인한다.
 ```
 
 ---
 
-## 6. Part C 분석에서 사용할 관찰 항목
+## 4. 비교 테스트 계획
+
+테스트 실행 클래스:
+
+```text
+src/main/java/com/zippt/benchmark/SaNfrBenchmark.java
+```
+
+실행 예시:
+
+```powershell
+mvn -q -Dexec.mainClass=com.zippt.benchmark.SaNfrBenchmark -Dexec.args="1000000" exec:java
+```
+
+Maven이 없는 환경에서는 JDK 17로 직접 컴파일 후 실행한다.
+
+```powershell
+$files = Get-ChildItem -Recurse -Filter *.java src\main\java
+New-Item -ItemType Directory -Force out\javac | Out-Null
+& 'C:\Program Files\Java\jdk-17\bin\javac.exe' -encoding UTF-8 -d out\javac $files.FullName
+& 'C:\Program Files\Java\jdk-17\bin\java.exe' -Xmx2g -cp out\javac com.zippt.benchmark.SaNfrBenchmark 1000000
+```
+
+10,000,000건 시연 예시:
+
+```powershell
+mvn -q -Dexec.mainClass=com.zippt.benchmark.SaNfrBenchmark -Dexec.args="10000000" exec:java
+```
+
+### 4.1 TEST-1 매물 지역 검색
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | L3+L4 전체 순회와 SA 지역 인덱스 조회 비교 |
+| 데이터 | N개 매물 중 마지막 1건만 `TARGET_REGION` |
+| L3+L4 | `properties().stream().filter(...)` |
+| SA | `findPropertyIdsByRegion(region)` |
+| 콘솔 출력 | 결과 건수, 수행 방식, elapsed time, 배수 차이 |
+
+### 4.2 TEST-2 경매별 입찰 조회
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | L3+L4 전체 Bid 순회와 SA auctionId 인덱스 조회 비교 |
+| 데이터 | N개 입찰 중 마지막 1건만 `auction-target` |
+| L3+L4 | `bids().stream().filter(...)` |
+| SA | `findBidsByAuction(auctionId)` |
+| 콘솔 출력 | 결과 건수, 수행 방식, elapsed time, 배수 차이 |
+
+### 4.3 TEST-3 콘솔 입력 오류 복구
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | 잘못된 콘솔 입력에 대한 복구 정책 비교 |
+| 입력 | `abc`, `0`, `3` |
+| L3+L4 | `NumberFormatException` 발생 |
+| SA | 오류 메시지 출력 후 같은 단계 재입력, 최종 `3` 수락 |
+
+---
+
+## 5. Part C 분석에서 사용할 관찰 항목
 
 | 관찰 항목 | 측정 방법 |
 |---|---|
-| Validation 메서드 수 변화 | L3+L4와 L3+L4+SA의 `validate*`, `ensure*`, `check*` 메서드 수 비교 |
-| 오류 코드/예외 클래스 수 변화 | ValidationErrorCode 또는 Exception 클래스 수 비교 |
-| Data Dictionary 반영률 | SA 표의 주요 제약 조건 중 코드에 반영된 항목 수 |
-| 도메인별 검증 위치 | Entity 내부 검증인지 Transaction Manager 검증인지 분류 |
-| 기존 구조 유지 여부 | client/server/common 패키지 구조가 유지되는지 확인 |
-
+| 검색 시간 변화 | `SaNfrBenchmark` TEST-1 elapsed time 비교 |
+| 입찰 조회 시간 변화 | `SaNfrBenchmark` TEST-2 elapsed time 비교 |
+| 조회 구조 변화 | `DataStore`의 `propertiesByRegion`, `bidsByAuction`, `bidsByAgent` 존재 여부 |
+| 입력 오류 복구 여부 | TEST-3 콘솔 메시지와 최종 입력값 확인 |
+| 관찰가능성 반영 여부 | `OperationLog` 생성 여부와 `operationLogs().size()` 확인 |

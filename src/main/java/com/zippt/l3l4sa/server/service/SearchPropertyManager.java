@@ -14,13 +14,19 @@ public class SearchPropertyManager {
     }
 
     public PropertySearchResult search(SearchPropertyCommand command) {
+        long startedAt = System.nanoTime();
         authenticationManager.validateBuyer(command.buyerId());
-        List<String> propertyIds = store.properties().stream()
-                .filter(property -> command.conditionInput() == null
-                        || command.conditionInput().region() == null
-                        || command.conditionInput().region().equals(property.getRegion()))
-                .map(property -> property.getPropertyId())
-                .toList();
+        String region = command.conditionInput() == null ? null : command.conditionInput().region();
+        List<String> propertyIds = region == null
+                ? store.properties().stream().map(property -> property.getPropertyId()).toList()
+                : store.findPropertyIdsByRegion(region);
+        store.addOperationLog(new OperationLog(
+                "SEARCH_PROPERTY",
+                command.buyerId(),
+                region == null ? "ALL" : region,
+                "SUCCESS(" + propertyIds.size() + ")",
+                System.nanoTime() - startedAt
+        ));
         return new PropertySearchResult(propertyIds);
     }
 }
