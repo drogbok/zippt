@@ -41,12 +41,18 @@ description: Use when working on the ZIP-PT AI-Driven COMET UML assignment, espe
 
 ## Current SA focus
 
-The current SA is NFR-based:
+The current SA is NFR-based. It defines 10 NFRs and uses 6 representative console tests for presentation evidence:
 
 - NFR-P1: property search responsiveness through `propertiesByRegion`.
 - NFR-P2: auction/bid lookup efficiency through `bidsByAuction` and `bidsByAgent`.
+- NFR-P3: agent bid-history lookup efficiency through `bidsByAgent`.
+- NFR-P4: bounded search results through `findPropertyIdsByRegion(region, limit)`.
 - NFR-U1: console input recovery through `ConsoleInputReader`.
+- NFR-U2: clear input error messages with field name, reason, and allowed range.
 - NFR-O1: operation observability through `OperationLog`.
+- NFR-R1: defensive copies for indexed lookup results.
+- NFR-M1: preserving the L3/L4 package structure while augmenting behavior.
+- NFR-T1: repeatable L3+L4 vs SA comparison through `SaNfrBenchmark`.
 
 Use this framing: L3/L4 created responsibility structure; SA added quality criteria that changed lookup paths, input recovery, and observability.
 
@@ -62,4 +68,3 @@ New-Item -ItemType Directory -Force out\javac | Out-Null
 ```
 
 Do not present benchmark numbers as production performance guarantees. Present them as controlled toy-dataset evidence that SA changed code structure and execution path.
-

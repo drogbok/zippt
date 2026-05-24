@@ -44,6 +44,12 @@ public class DataStore {
                 .map(Property::getPropertyId)
                 .collect(Collectors.toList());
     }
+    public List<String> findPropertyIdsByRegion(String region, int limit) {
+        return propertiesByRegion.getOrDefault(region, Collections.emptyList()).stream()
+                .limit(limit)
+                .map(Property::getPropertyId)
+                .collect(Collectors.toList());
+    }
     public void saveAuction(Auction auction) { auctions.put(auction.getAuctionId(), auction); }
     public Auction findAuction(String auctionId) { return auctions.get(auctionId); }
     public Collection<Auction> auctions() { return auctions.values(); }

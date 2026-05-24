@@ -6,7 +6,10 @@ import java.util.List;
 public class SaNfrBenchmark {
     private static final String BUYER_ID = "buyer-benchmark";
     private static final String TARGET_REGION = "TARGET_REGION";
+    private static final String POPULAR_REGION = "REGION_7";
     private static final String TARGET_AUCTION_ID = "auction-target";
+    private static final String TARGET_AGENT_ID = "agent-target";
+    private static final int RESULT_LIMIT = 20;
 
     public static void main(String[] args) {
         int itemCount = resolveItemCount(args);
@@ -20,6 +23,9 @@ public class SaNfrBenchmark {
 
         runPropertySearchTest(itemCount);
         runBidLookupTest(itemCount);
+        runAgentBidLookupTest(itemCount);
+        runBoundedSearchResultTest(itemCount);
+        runObservabilityLogTest(itemCount);
         runConsoleInputRecoveryTest();
     }
 
@@ -151,6 +157,117 @@ public class SaNfrBenchmark {
         printComparison("경매별 입찰 조회", l3Time, saTime);
     }
 
+    private static void runAgentBidLookupTest(int itemCount) {
+        System.out.println();
+        System.out.println("[TEST-3] 성능 NFR-P3: 중개사별 입찰 이력 조회 효율");
+        System.out.println("목표: 특정 agentId의 입찰 이력 조회에서 L3+L4 전체 Bid 순회와 SA agentId 인덱스 조회 시간을 비교합니다.");
+        System.out.println("검색 조건: agentId = " + TARGET_AGENT_ID + " (마지막 1건만 매칭)");
+
+        long l3Time = benchmarkL3L4AgentBidLookup(itemCount);
+        long saTime = benchmarkSaAgentBidLookup(itemCount);
+
+        printComparison("중개사별 입찰 이력 조회", l3Time, saTime);
+    }
+
+    private static long benchmarkL3L4AgentBidLookup(int itemCount) {
+        com.zippt.l3l4.server.service.DataStore store = new com.zippt.l3l4.server.service.DataStore();
+        seedL3L4Bids(store, itemCount);
+
+        long startedAt = System.nanoTime();
+        int resultCount = store.bids().stream()
+                .filter(bid -> bid.submittedBy(TARGET_AGENT_ID))
+                .toList()
+                .size();
+        long elapsed = System.nanoTime() - startedAt;
+        System.out.println("  L3+L4 baseline 결과: " + resultCount + "건, 전체 bids() stream/filter 수행");
+        return elapsed;
+    }
+
+    private static long benchmarkSaAgentBidLookup(int itemCount) {
+        com.zippt.l3l4sa.server.service.DataStore store = new com.zippt.l3l4sa.server.service.DataStore();
+        seedSaBids(store, itemCount);
+
+        long startedAt = System.nanoTime();
+        int resultCount = store.findBidsByAgent(TARGET_AGENT_ID).size();
+        long elapsed = System.nanoTime() - startedAt;
+        System.out.println("  SA NFR 결과: " + resultCount + "건, findBidsByAgent(agentId) 인덱스 조회 수행");
+        return elapsed;
+    }
+
+    private static void runBoundedSearchResultTest(int itemCount) {
+        System.out.println();
+        System.out.println("[TEST-4] 성능/자원 NFR-P4: 검색 결과 상한 적용");
+        System.out.println("목표: 많이 매칭되는 지역 검색에서 필요한 " + RESULT_LIMIT + "건만 반환해 응답 크기를 제한하는지 비교합니다.");
+        System.out.println("검색 조건: region = " + POPULAR_REGION + ", limit = " + RESULT_LIMIT);
+
+        long l3Time = benchmarkL3L4BoundedPropertySearch(itemCount);
+        long saTime = benchmarkSaBoundedPropertySearch(itemCount);
+
+        printComparison("검색 결과 상한 적용", l3Time, saTime);
+    }
+
+    private static long benchmarkL3L4BoundedPropertySearch(int itemCount) {
+        com.zippt.l3l4.server.service.DataStore store = new com.zippt.l3l4.server.service.DataStore();
+        seedL3L4Properties(store, itemCount);
+
+        long startedAt = System.nanoTime();
+        int resultCount = store.properties().stream()
+                .filter(property -> POPULAR_REGION.equals(property.getRegion()))
+                .map(property -> property.getPropertyId())
+                .limit(RESULT_LIMIT)
+                .toList()
+                .size();
+        long elapsed = System.nanoTime() - startedAt;
+        System.out.println("  L3+L4 baseline 결과: " + resultCount + "건, 전체 properties() stream/filter 이후 limit 적용");
+        return elapsed;
+    }
+
+    private static long benchmarkSaBoundedPropertySearch(int itemCount) {
+        com.zippt.l3l4sa.server.service.DataStore store = new com.zippt.l3l4sa.server.service.DataStore();
+        seedSaProperties(store, itemCount);
+
+        long startedAt = System.nanoTime();
+        int resultCount = store.findPropertyIdsByRegion(POPULAR_REGION, RESULT_LIMIT).size();
+        long elapsed = System.nanoTime() - startedAt;
+        System.out.println("  SA NFR 결과: " + resultCount + "건, 지역 인덱스에서 필요한 수만 제한 조회");
+        return elapsed;
+    }
+
+    private static void runObservabilityLogTest(int itemCount) {
+        System.out.println();
+        System.out.println("[TEST-5] 관찰가능성 NFR-O1: 유스케이스 처리 로그");
+        System.out.println("목표: SA 버전이 검색 결과뿐 아니라 작업명/행위자/대상/결과/소요시간을 OperationLog로 남기는지 확인합니다.");
+
+        com.zippt.l3l4sa.server.service.DataStore store = new com.zippt.l3l4sa.server.service.DataStore();
+        com.zippt.l3l4sa.server.domain.Buyer buyer = new com.zippt.l3l4sa.server.domain.Buyer(
+                BUYER_ID, "benchmark buyer", "buyer@zippt.test", "hash",
+                TARGET_REGION, BigDecimal.ZERO, BigDecimal.TEN
+        );
+        buyer.login();
+        store.saveUser(buyer);
+        seedSaProperties(store, Math.max(1, itemCount / 10));
+
+        com.zippt.l3l4sa.server.service.SearchPropertyManager manager =
+                new com.zippt.l3l4sa.server.service.SearchPropertyManager(
+                        store,
+                        new com.zippt.l3l4sa.server.service.AuthenticationManager(store)
+                );
+        manager.search(new com.zippt.l3l4sa.common.command.Commands.SearchPropertyCommand(
+                BUYER_ID,
+                new com.zippt.l3l4sa.common.command.Commands.PropertyConditionInput(
+                        TARGET_REGION, null, null, null, null, null, null
+                )
+        ));
+
+        com.zippt.l3l4sa.server.service.OperationLog log = store.operationLogs().get(0);
+        System.out.println("  SA NFR 결과: OperationLog 1건 생성");
+        System.out.println("  로그 요약: operation=" + log.getOperationName()
+                + ", actor=" + log.getActorId()
+                + ", target=" + log.getTargetId()
+                + ", result=" + log.getResult()
+                + ", elapsedNanos=" + log.getElapsedNanos());
+    }
+
     private static long benchmarkL3L4BidLookup(int itemCount) {
         com.zippt.l3l4.server.service.DataStore store = new com.zippt.l3l4.server.service.DataStore();
         seedL3L4Bids(store, itemCount);
@@ -180,6 +297,7 @@ public class SaNfrBenchmark {
     private static void seedL3L4Bids(com.zippt.l3l4.server.service.DataStore store, int itemCount) {
         for (int i = 0; i < itemCount; i++) {
             String auctionId = i == itemCount - 1 ? TARGET_AUCTION_ID : "auction-" + (i % 1_000);
+            String agentId = i == itemCount - 1 ? TARGET_AGENT_ID : "agent-" + i;
             com.zippt.l3l4.server.domain.BidProposal proposal = new com.zippt.l3l4.server.domain.BidProposal(
                     "proposal-" + i,
                     "bid-" + i,
@@ -188,13 +306,14 @@ public class SaNfrBenchmark {
                     30,
                     "benchmark terms"
             );
-            store.saveBid(new com.zippt.l3l4.server.domain.Bid("bid-" + i, auctionId, "agent-" + i, proposal));
+            store.saveBid(new com.zippt.l3l4.server.domain.Bid("bid-" + i, auctionId, agentId, proposal));
         }
     }
 
     private static void seedSaBids(com.zippt.l3l4sa.server.service.DataStore store, int itemCount) {
         for (int i = 0; i < itemCount; i++) {
             String auctionId = i == itemCount - 1 ? TARGET_AUCTION_ID : "auction-" + (i % 1_000);
+            String agentId = i == itemCount - 1 ? TARGET_AGENT_ID : "agent-" + i;
             com.zippt.l3l4sa.server.domain.BidProposal proposal = new com.zippt.l3l4sa.server.domain.BidProposal(
                     "proposal-" + i,
                     "bid-" + i,
@@ -203,13 +322,13 @@ public class SaNfrBenchmark {
                     30,
                     "benchmark terms"
             );
-            store.saveBid(new com.zippt.l3l4sa.server.domain.Bid("bid-" + i, auctionId, "agent-" + i, proposal));
+            store.saveBid(new com.zippt.l3l4sa.server.domain.Bid("bid-" + i, auctionId, agentId, proposal));
         }
     }
 
     private static void runConsoleInputRecoveryTest() {
         System.out.println();
-        System.out.println("[TEST-3] 사용성 NFR-U1: 콘솔 입력 오류 복구성");
+        System.out.println("[TEST-6] 사용성 NFR-U1: 콘솔 입력 오류 복구성");
         System.out.println("목표: 잘못된 입력이 들어와도 SA 버전은 같은 단계에서 재입력을 받아 복구하는지 확인합니다.");
         System.out.println("입력 시나리오: [abc, 0, 3], 허용 범위: 1~5");
 

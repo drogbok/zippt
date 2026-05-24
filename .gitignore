@@ -12,3 +12,7 @@ __pycache__/
 
 # output files
 out/
+target/
+
+# IDE files
+.idea/
