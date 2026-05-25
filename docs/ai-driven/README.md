@@ -22,7 +22,7 @@
 
 - L3 Static Modeling: 도메인에 무엇이 존재하는지 고정한다. Entity, 속성, 관계를 명확히 하여 AI가 임의로 도메인 개념을 만들어내는 범위를 줄인다.
 - L4 Object Structuring: 누가 어떤 책임을 갖고 어디에 배치되는지 고정한다. Client/Server, Interface, Control, Entity, Business Logic 경계를 명확히 한다.
-- SA Specification Augmentation: L3/L4 구조를 뒤집지 않고, 그 구조 안에서 부족했던 품질 기준이나 세부 정책을 보강한다. 이번 산출물에서는 Data Dictionary 대신 NFR을 적용했다.
+- SA Specification Augmentation: L3/L4 구조를 뒤집지 않고, 그 구조 안에서 부족했던 값 범위, 업무 규칙, 품질 기준을 보강한다. 이번 산출물에서는 L2부터 존재한 동시성 시나리오를 SA에서 검증 가능한 품질 요구로 구체화했다.
 
 ## 이번 SA의 핵심
 
@@ -36,8 +36,8 @@
 - BR-3 Business Rule: 낙찰은 마감 이후 1회만 가능
 - NFR-P1 Performance: 매물 지역 검색을 전체 순회에서 지역 인덱스 조회로 변경
 - NFR-P2 Performance: 경매/중개사별 입찰 조회를 전체 순회에서 식별자 인덱스 조회로 변경
-- NFR-U1 Usability: 잘못된 콘솔 입력을 예외 종료가 아니라 같은 단계 재입력으로 복구
-- NFR-O1 Observability: 주요 유스케이스 실행 결과를 `OperationLog`로 추적
+- NFR-C1 Concurrency: 동시 입찰 요청에서도 동일 경매/동일 중개사 활성 입찰은 1건만 허용
+- NFR-C2 Concurrency: 동시 낙찰 선택 요청에서도 최종 낙찰은 정확히 1회만 성공
 
 요약하면 L3/L4가 구조와 책임을 만든다면, SA는 그 책임을 어떤 품질 기준으로 수행해야 하는지 보여준다.
 

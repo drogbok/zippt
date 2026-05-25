@@ -20,7 +20,7 @@ description: Use when working on the ZIP-PT AI-Driven COMET UML assignment, espe
 
 - L3 Static Modeling means "what domain concepts exist": Entity classes, attributes, and relationships.
 - L4 Object Structuring means "who owns which responsibility and where it runs": Client/Server, Interface, Control, Entity, Business Logic.
-- SA means "what quality/constraint/policy is added without overturning L3/L4": in the current ZIP-PT work, SA is NFR-based rather than Data Dictionary-based.
+- SA means "what quality/constraint/policy is added without overturning L3/L4": in the current ZIP-PT work, SA combines Data Dictionary, Business Rule, and NFR, with stronger emphasis on performance and concurrency.
 
 ## Main reference files
 
@@ -51,10 +51,10 @@ The current SA combines Data Dictionary, Business Rule, and NFR items into 10 au
 - BR-3: winner selection only after close and only once.
 - NFR-P1: property search responsiveness through `propertiesByRegion`.
 - NFR-P2: auction/agent bid lookup efficiency through `bidsByAuction` and `bidsByAgent`.
-- NFR-U1: console input recovery through `ConsoleInputReader`.
-- NFR-O1: operation observability through `OperationLog`.
+- NFR-C1: concurrent duplicate bid atomicity through `SubmitBidManager` and `DataStore.lockFor()`.
+- NFR-C2: concurrent winner selection consistency through `SelectWinnerManager` and `DataStore.lockFor()`.
 
-Use this framing: L3/L4 created responsibility structure; SA added value ranges, domain action rules, and quality criteria.
+Use this framing: L2 already had concurrent bidding/winner-selection scenarios; L3/L4 created responsibility structure; SA made value ranges, domain action rules, performance, and concurrency criteria explicit and testable.
 
 ## Verification
 

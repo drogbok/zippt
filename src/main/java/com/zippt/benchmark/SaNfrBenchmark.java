@@ -1,7 +1,14 @@
 package com.zippt.benchmark;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class SaNfrBenchmark {
     private static final String BUYER_ID = "buyer-benchmark";
@@ -25,8 +32,8 @@ public class SaNfrBenchmark {
         runBidLookupTest(itemCount);
         runAgentBidLookupTest(itemCount);
         runBoundedSearchResultTest(itemCount);
-        runObservabilityLogTest(itemCount);
-        runConsoleInputRecoveryTest();
+        runConcurrentDuplicateBidTest();
+        runConcurrentWinnerSelectionTest();
     }
 
     private static int resolveItemCount(String[] args) {
@@ -105,7 +112,7 @@ public class SaNfrBenchmark {
         int resultCount = manager.search(command).propertyIds().size();
         long elapsed = System.nanoTime() - startedAt;
         System.out.println("  SA NFR 결과: " + resultCount + "건, findPropertyIdsByRegion(region) 인덱스 조회 수행");
-        System.out.println("  SA 관찰가능성 로그 수: " + store.operationLogs().size() + "건");
+        System.out.println("  SA 보조 로그 수: " + store.operationLogs().size() + "건");
         return elapsed;
     }
 
@@ -233,39 +240,174 @@ public class SaNfrBenchmark {
         return elapsed;
     }
 
-    private static void runObservabilityLogTest(int itemCount) {
+    private static void runConcurrentDuplicateBidTest() {
         System.out.println();
-        System.out.println("[TEST-5] 관찰가능성 NFR-O1: 유스케이스 처리 로그");
-        System.out.println("목표: SA 버전이 검색 결과뿐 아니라 작업명/행위자/대상/결과/소요시간을 OperationLog로 남기는지 확인합니다.");
+        System.out.println("[TEST-5] 동시성 NFR-C1: 동일 경매 중복 입찰 원자성");
+        System.out.println("목표: L2부터 존재한 동시 입찰 시나리오에서 같은 agentId의 동시 요청 20개 중 1건만 성공하는지 확인합니다.");
 
-        com.zippt.l3l4sa.server.service.DataStore store = new com.zippt.l3l4sa.server.service.DataStore();
-        com.zippt.l3l4sa.server.domain.Buyer buyer = new com.zippt.l3l4sa.server.domain.Buyer(
-                BUYER_ID, "benchmark buyer", "buyer@zippt.test", "hash",
-                TARGET_REGION, BigDecimal.ZERO, BigDecimal.TEN
-        );
-        buyer.login();
-        store.saveUser(buyer);
-        seedSaProperties(store, Math.max(1, itemCount / 10));
-
-        com.zippt.l3l4sa.server.service.SearchPropertyManager manager =
-                new com.zippt.l3l4sa.server.service.SearchPropertyManager(
+        com.zippt.l3l4sa.server.service.DataStore store = createSaAuctionStore(
+                TARGET_AUCTION_ID, LocalDateTime.now().plusHours(2), true);
+        com.zippt.l3l4sa.server.service.SubmitBidManager manager =
+                new com.zippt.l3l4sa.server.service.SubmitBidManager(
                         store,
                         new com.zippt.l3l4sa.server.service.AuthenticationManager(store)
                 );
-        manager.search(new com.zippt.l3l4sa.common.command.Commands.SearchPropertyCommand(
-                BUYER_ID,
-                new com.zippt.l3l4sa.common.command.Commands.PropertyConditionInput(
-                        TARGET_REGION, null, null, null, null, null, null
+        int requestCount = 20;
+        ConcurrentResult result = runConcurrently(requestCount, () -> manager.submitBid(
+                new com.zippt.l3l4sa.common.command.Commands.SubmitBidCommand(
+                        TARGET_AGENT_ID,
+                        TARGET_AUCTION_ID,
+                        new com.zippt.l3l4sa.common.command.Commands.BidProposalInput(
+                                BigDecimal.valueOf(3.5),
+                                "동시 입찰 검증용 마케팅 전략입니다.",
+                                30,
+                                "동시 입찰 검증용 서비스 조건입니다."
+                        )
                 )
         ));
 
-        com.zippt.l3l4sa.server.service.OperationLog log = store.operationLogs().get(0);
-        System.out.println("  SA NFR 결과: OperationLog 1건 생성");
-        System.out.println("  로그 요약: operation=" + log.getOperationName()
-                + ", actor=" + log.getActorId()
-                + ", target=" + log.getTargetId()
-                + ", result=" + log.getResult()
-                + ", elapsedNanos=" + log.getElapsedNanos());
+        long savedBids = store.findBidsByAuction(TARGET_AUCTION_ID).stream()
+                .filter(bid -> bid.submittedBy(TARGET_AGENT_ID))
+                .count();
+        System.out.println("  SA NFR 결과: 요청 " + requestCount + "건 중 성공 " + result.successCount()
+                + "건, 거부 " + result.failureCount() + "건");
+        System.out.println("  저장 상태: 동일 auctionId + agentId 활성 입찰 " + savedBids + "건");
+    }
+
+    private static void runConcurrentWinnerSelectionTest() {
+        System.out.println();
+        System.out.println("[TEST-6] 동시성 NFR-C2: 동시 낙찰 선택 일관성");
+        System.out.println("목표: L2부터 존재한 중복 낙찰 방지 시나리오에서 동시 낙찰 요청 20개 중 1건만 성공하는지 확인합니다.");
+
+        com.zippt.l3l4sa.server.service.DataStore store = createSaAuctionStore(
+                TARGET_AUCTION_ID, LocalDateTime.now().minusMinutes(1), false);
+        com.zippt.l3l4sa.server.domain.Auction auction = store.findAuction(TARGET_AUCTION_ID);
+        auction.close();
+        String selectedBidId = "bid-winner";
+        store.saveBid(new com.zippt.l3l4sa.server.domain.Bid(
+                selectedBidId,
+                TARGET_AUCTION_ID,
+                TARGET_AGENT_ID,
+                new com.zippt.l3l4sa.server.domain.BidProposal(
+                        "proposal-winner",
+                        selectedBidId,
+                        BigDecimal.valueOf(3.5),
+                        "낙찰 동시성 검증용 마케팅 전략입니다.",
+                        30,
+                        "낙찰 동시성 검증용 서비스 조건입니다."
+                )
+        ));
+        com.zippt.l3l4sa.server.service.SelectWinnerManager manager =
+                new com.zippt.l3l4sa.server.service.SelectWinnerManager(
+                        store,
+                        new com.zippt.l3l4sa.server.service.AuthenticationManager(store),
+                        new com.zippt.l3l4sa.server.control.AuctionLifecycleControl()
+                );
+
+        int requestCount = 20;
+        ConcurrentResult result = runConcurrently(requestCount, () -> manager.selectWinner(
+                new com.zippt.l3l4sa.common.command.Commands.SelectWinnerCommand(
+                        "seller-benchmark",
+                        TARGET_AUCTION_ID,
+                        selectedBidId
+                )
+        ));
+
+        System.out.println("  SA NFR 결과: 요청 " + requestCount + "건 중 성공 " + result.successCount()
+                + "건, 거부 " + result.failureCount() + "건");
+        System.out.println("  저장 상태: auction.status=" + auction.getStatus()
+                + ", selectedBidId=" + auction.getSelectedBidId());
+    }
+
+    private static com.zippt.l3l4sa.server.service.DataStore createSaAuctionStore(
+            String auctionId, LocalDateTime deadline, boolean openAuction) {
+        com.zippt.l3l4sa.server.service.DataStore store = new com.zippt.l3l4sa.server.service.DataStore();
+        com.zippt.l3l4sa.server.domain.Seller seller = new com.zippt.l3l4sa.server.domain.Seller(
+                "seller-benchmark", "benchmark seller", "seller@zippt.test", "hash", "STANDARD");
+        seller.login();
+        store.saveUser(seller);
+
+        com.zippt.l3l4sa.server.domain.Agent agent = new com.zippt.l3l4sa.server.domain.Agent(
+                TARGET_AGENT_ID, "benchmark agent", "agent@zippt.test", "hash", "benchmark office", TARGET_REGION);
+        agent.login();
+        agent.verifyCredential();
+        store.saveUser(agent);
+        com.zippt.l3l4sa.server.domain.AgentCredential credential =
+                new com.zippt.l3l4sa.server.domain.AgentCredential(
+                        "credential-benchmark", TARGET_AGENT_ID, "LIC-123456", "OFF-123456");
+        credential.verify();
+        store.saveCredential(credential);
+
+        com.zippt.l3l4sa.server.domain.Auction auction = new com.zippt.l3l4sa.server.domain.Auction(
+                auctionId,
+                "property-benchmark",
+                seller.getUserId(),
+                new com.zippt.l3l4sa.server.domain.AuctionCondition(
+                        "condition-benchmark",
+                        auctionId,
+                        "기본 중개 서비스 조건입니다.",
+                        "검증된 중개사",
+                        deadline
+                ),
+                new com.zippt.l3l4sa.server.domain.WinnerSelectionCriteria(
+                        "criteria-benchmark",
+                        auctionId,
+                        com.zippt.l3l4sa.common.enums.WinnerPriorityType.BALANCED,
+                        BigDecimal.valueOf(0.5),
+                        BigDecimal.valueOf(0.5)
+                )
+        );
+        if (openAuction) {
+            auction.open();
+        }
+        store.saveAuction(auction);
+        return store;
+    }
+
+    private static ConcurrentResult runConcurrently(int requestCount, Runnable action) {
+        ExecutorService executor = Executors.newFixedThreadPool(requestCount);
+        CountDownLatch ready = new CountDownLatch(requestCount);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger successCount = new AtomicInteger();
+        AtomicInteger failureCount = new AtomicInteger();
+        List<String> failureMessages = new ArrayList<>();
+
+        for (int i = 0; i < requestCount; i++) {
+            executor.submit(() -> {
+                ready.countDown();
+                try {
+                    start.await();
+                    action.run();
+                    successCount.incrementAndGet();
+                } catch (Exception e) {
+                    synchronized (failureMessages) {
+                        failureMessages.add(e.getClass().getSimpleName() + ": " + e.getMessage());
+                    }
+                    failureCount.incrementAndGet();
+                }
+            });
+        }
+
+        try {
+            ready.await(5, TimeUnit.SECONDS);
+            start.countDown();
+            executor.shutdown();
+            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            executor.shutdownNow();
+            throw new IllegalStateException("Concurrent benchmark interrupted.", e);
+        }
+
+        if (!failureMessages.isEmpty()) {
+            System.out.println("  대표 거부 메시지: " + failureMessages.get(0));
+        }
+        return new ConcurrentResult(successCount.get(), failureCount.get());
+    }
+
+    private record ConcurrentResult(int successCount, int failureCount) {
     }
 
     private static long benchmarkL3L4BidLookup(int itemCount) {
@@ -324,25 +466,6 @@ public class SaNfrBenchmark {
             );
             store.saveBid(new com.zippt.l3l4sa.server.domain.Bid("bid-" + i, auctionId, agentId, proposal));
         }
-    }
-
-    private static void runConsoleInputRecoveryTest() {
-        System.out.println();
-        System.out.println("[TEST-6] 사용성 NFR-U1: 콘솔 입력 오류 복구성");
-        System.out.println("목표: 잘못된 입력이 들어와도 SA 버전은 같은 단계에서 재입력을 받아 복구하는지 확인합니다.");
-        System.out.println("입력 시나리오: [abc, 0, 3], 허용 범위: 1~5");
-
-        try {
-            Integer.parseInt("abc");
-            System.out.println("  L3+L4 baseline 결과: 예외 없이 통과");
-        } catch (NumberFormatException e) {
-            System.out.println("  L3+L4 baseline 결과: NumberFormatException 발생, 입력 단계 복구 정책 없음");
-        }
-
-        com.zippt.l3l4sa.common.input.ConsoleInputReader reader =
-                new com.zippt.l3l4sa.common.input.ConsoleInputReader();
-        int recovered = reader.readIntWithRetry("평점", List.of("abc", "0", "3"), 1, 5);
-        System.out.println("  SA NFR 결과: 최종 입력값 " + recovered + "으로 같은 단계에서 복구 완료");
     }
 
     private static void printComparison(String label, long l3Time, long saTime) {

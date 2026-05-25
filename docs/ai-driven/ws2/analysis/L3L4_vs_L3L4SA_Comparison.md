@@ -16,7 +16,7 @@ L3+L4 단계는 Client/Server, Interface/Control/Entity/Business Logic 분리를
 
 - `bidDeadline`, `commissionRate`, `criteriaWeight`의 구체적인 허용 범위
 - 중복 입찰, 마감 이후 입찰, 중복 낙찰 같은 도메인 행위 제약
-- 검색/조회 성능, 입력 오류 복구, 처리 결과 추적 같은 품질 기준
+- 검색/조회 성능, 동시 입찰/동시 낙찰 일관성 같은 품질 기준
 
 SA 단계에서는 이를 10개 항목으로 보강했다.
 
@@ -24,11 +24,13 @@ SA 단계에서는 이를 10개 항목으로 보강했다.
 |---|---:|---|
 | Data Dictionary | 3 | 값의 의미와 허용 범위를 구체화 |
 | Business Rule | 3 | 도메인에서 허용/금지되는 행위를 구체화 |
-| NFR | 4 | 같은 기능을 어떤 품질로 수행할지 구체화 |
+| NFR | 4 | 같은 기능을 성능과 동시성 측면에서 어떤 품질로 수행할지 구체화 |
 
 핵심 메시지:
 
 > L3/L4가 "누가 무엇을 책임지는가"를 정했다면, SA는 "그 책임을 어떤 값 범위, 업무 규칙, 품질 기준으로 수행해야 하는가"를 구체화했다.
+
+동시성 항목은 SA에서 새로 만든 기능이 아니다. L2의 Use Case Description과 구현에는 이미 동시 입찰/중복 낙찰 방지 시나리오가 있었고, L3/L4에서는 이 책임이 `SubmitBidManager`, `SelectWinnerManager`, `DataStore.lockFor()`로 이동했다. SA는 이 흐름을 "동시 요청에서도 성공 1건, 나머지 거부"처럼 테스트 가능한 품질 기준으로 명시한다.
 
 ---
 
@@ -44,8 +46,8 @@ SA 단계에서는 이를 10개 항목으로 보강했다.
 | BR-3 | Business Rule | 낙찰은 마감 이후 1회만 가능 | `SelectWinnerManager.validateAuctionClosed()`, `validateNoWinnerSelected()` |
 | NFR-P1 | Performance | 매물 지역 검색 응답성 | `DataStore.propertiesByRegion`, `SearchPropertyManager.search()` |
 | NFR-P2 | Performance | 경매/중개사별 입찰 조회 효율 | `DataStore.bidsByAuction`, `DataStore.bidsByAgent` |
-| NFR-U1 | Usability | 콘솔 입력 오류 복구 | `ConsoleInputReader.readIntWithRetry()` |
-| NFR-O1 | Observability | 처리 결과 로그 | `OperationLog`, `SearchPropertyManager.search()` |
+| NFR-C1 | Concurrency | 동시 입찰 요청 원자성 | `SubmitBidManager.submitBid()`, `DataStore.lockFor()` |
+| NFR-C2 | Concurrency | 동시 낙찰 선택 일관성 | `SelectWinnerManager.selectWinner()`, `AuctionLifecycleControl` |
 
 ---
 
@@ -191,21 +193,33 @@ store.findBidsByAuction(auctionId);
 store.findBidsByAgent(agentId);
 ```
 
-### 5.3 NFR-U1 콘솔 입력 오류 복구
+### 5.3 NFR-C1 동시 입찰 요청 원자성
 
 SA:
 
 ```text
-잘못된 숫자 입력 -> 오류 원인 안내 -> 같은 단계 재입력 -> 정상 값 수락
+동일 auctionId + agentId로 여러 Submit Bid 요청이 동시에 도착해도
+검증, 중복 입찰 확인, 저장, bidCount 증가가 auctionId 단위 임계 영역에서 처리된다.
 ```
 
-### 5.4 NFR-O1 처리 결과 로그
+의미:
+
+- L2의 동시성 제어 시나리오를 `SubmitBidManager` 책임 안에서 검증 가능한 품질 기준으로 구체화한다.
+- 동시 요청 테스트에서 성공 1건, 거부 N-1건이 관찰되어야 한다.
+
+### 5.4 NFR-C2 동시 낙찰 선택 일관성
 
 SA:
 
-```java
-new OperationLog("SEARCH_PROPERTY", buyerId, region, "SUCCESS(...)", elapsedNanos)
+```text
+같은 auctionId로 여러 Select Winner 요청이 동시에 도착해도
+낙찰 가능 여부 확인과 winner 상태 변경이 auctionId 단위 임계 영역에서 처리된다.
 ```
+
+의미:
+
+- L2의 중복 낙찰 방지 시나리오를 `SelectWinnerManager` 책임 안에서 검증 가능한 품질 기준으로 구체화한다.
+- 동시 요청 테스트에서 최종 `selectedBidId`는 1개만 확정되어야 한다.
 
 ---
 
@@ -223,10 +237,10 @@ new OperationLog("SEARCH_PROPERTY", buyerId, region, "SUCCESS(...)", elapsedNano
 | 중복 낙찰 거부 | BR-3 | 이미 낙찰된 경매의 Select Winner 재시도 거부 |
 | 매물 지역 검색 성능 비교 | NFR-P1 | 전체 순회 vs 지역 인덱스 조회 |
 | 입찰 조회 성능 비교 | NFR-P2 | 전체 순회 vs auctionId/agentId 인덱스 조회 |
-| 콘솔 입력 오류 복구 | NFR-U1 | `abc`, `0`, `3` 입력 복구 |
-| OperationLog 생성 확인 | NFR-O1 | 작업명/행위자/대상/결과/소요시간 기록 확인 |
+| 동시 입찰 원자성 | NFR-C1 | 동일 auctionId + agentId 동시 요청 중 성공 1건, 나머지 거부 |
+| 동시 낙찰 선택 일관성 | NFR-C2 | 같은 auctionId 동시 낙찰 요청 중 성공 1건, 나머지 거부 |
 
-현재 `SaNfrBenchmark`는 NFR-P1, NFR-P2, NFR-U1, NFR-O1 중심으로 콘솔 비교를 제공한다. DD/BR 항목은 발표에서 선택할 테스트가 확정되면 별도 테스트로 추가하면 된다.
+현재 `SaNfrBenchmark`는 NFR-P1, NFR-P2, NFR-C1, NFR-C2 중심으로 콘솔 비교를 제공한다. DD/BR 항목은 발표에서 선택할 테스트가 확정되면 별도 테스트로 추가하면 된다.
 
 ---
 
@@ -245,5 +259,4 @@ new OperationLog("SEARCH_PROPERTY", buyerId, region, "SUCCESS(...)", elapsedNano
 
 > L3/L4만으로도 객체 구조는 분리되지만, 수수료율 범위나 마감기한, 중복 입찰 제한, 검색 인덱스 같은 세부 정책은 여전히 불명확할 수 있다.
 
-> SA를 추가하자 AI 생성 코드는 단순 구조 분리를 넘어 validation, 도메인 행위 제한, 조회 인덱스, 입력 복구, 처리 로그를 포함하는 방향으로 구체화되었다.
-
+> SA를 추가하자 AI 생성 코드는 단순 구조 분리를 넘어 validation, 도메인 행위 제한, 조회 인덱스, 동시 요청 원자성/일관성까지 포함하는 방향으로 구체화되었다.
