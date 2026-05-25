@@ -159,7 +159,7 @@ public class SaNfrBenchmark {
 
     private static void runAgentBidLookupTest(int itemCount) {
         System.out.println();
-        System.out.println("[TEST-3] 성능 NFR-P3: 중개사별 입찰 이력 조회 효율");
+        System.out.println("[TEST-3] 성능 NFR-P2: 중개사별 입찰 이력 조회 효율");
         System.out.println("목표: 특정 agentId의 입찰 이력 조회에서 L3+L4 전체 Bid 순회와 SA agentId 인덱스 조회 시간을 비교합니다.");
         System.out.println("검색 조건: agentId = " + TARGET_AGENT_ID + " (마지막 1건만 매칭)");
 
@@ -196,8 +196,8 @@ public class SaNfrBenchmark {
 
     private static void runBoundedSearchResultTest(int itemCount) {
         System.out.println();
-        System.out.println("[TEST-4] 성능/자원 NFR-P4: 검색 결과 상한 적용");
-        System.out.println("목표: 많이 매칭되는 지역 검색에서 필요한 " + RESULT_LIMIT + "건만 반환해 응답 크기를 제한하는지 비교합니다.");
+        System.out.println("[TEST-4] 보조 성능 확인: 검색 결과 상한 적용");
+        System.out.println("목표: NFR-P1 매물 검색 인덱스를 사용할 때 필요한 " + RESULT_LIMIT + "건만 반환해 응답 크기를 제한하는지 비교합니다.");
         System.out.println("검색 조건: region = " + POPULAR_REGION + ", limit = " + RESULT_LIMIT);
 
         long l3Time = benchmarkL3L4BoundedPropertySearch(itemCount);

@@ -4,58 +4,138 @@
 
 - 대상 시스템: 집피티(ZIP-PT)
 - 단계: Part C Specification Augmentation
-- 선택한 추가 명세 유형: 비기능 요구사항(NFR)
+- 선택한 추가 명세 유형: Data Dictionary + Business Rule + NFR
 - 연결 대상:
-  - L3 Static Modeling의 `Property`, `Bid`, `Auction`, `Buyer`, `Agent` Entity
-  - L4 Object Structuring의 `SearchPropertyManager`, `AuctionQueryControl`, `DataStore`, Client UI 흐름
+  - L3 Static Modeling의 `Auction`, `Bid`, `BidProposal`, `AuctionCondition`, `WinnerSelectionCriteria`, `Property`, `Agent` Entity
+  - L4 Object Structuring의 `SubmitBidManager`, `SelectWinnerManager`, `SearchPropertyManager`, `AuctionQueryControl`, `DataStore`
 
-### 0.1 NFR을 선택한 이유
+### 0.1 세 가지 유형으로 나눈 이유
 
-L3+L4 산출물은 도메인 객체와 Client/Server 책임을 분리했지만, 검색 응답성, 조회 효율, 입력 오류 복구, 처리 결과 추적 같은 품질 조건은 충분히 구체화하지 않았다.
+SA는 L3/L4 구조를 새로 뒤집는 단계가 아니라, L3/L4만으로는 부족했던 세부 명세를 보강하는 단계로 해석한다. 이번 SA는 다음 세 유형으로 구성한다.
 
-이번 SA는 새 유스케이스를 추가하기보다, 기존 L3+L4 구조 안에서 다음 질문을 관찰한다.
-
-> 비기능 요구사항을 추가하면 AI 생성 코드는 단순 기능 구현을 넘어 저장 구조, 조회 방식, UI 입력 흐름, 처리 로그 구조를 다르게 생성하는가?
-
----
-
-## 1. 추가 비기능 요구사항 10개
-
-| ID | 분류 | 요구사항 | L3/L4 연결 지점 | 코드 반영 기대 |
-|---|---|---|---|---|
-| NFR-P1 | 성능 | 지역 조건 매물 검색은 전체 매물 목록을 매번 순회하지 않고 지역별 조회 구조를 사용할 수 있어야 한다. | `Property.region`, `SearchPropertyManager`, `DataStore` | `propertiesByRegion`, `findPropertyIdsByRegion()` |
-| NFR-P2 | 성능 | 특정 경매의 입찰 목록은 전체 Bid 목록 순회 없이 `auctionId` 기준으로 조회할 수 있어야 한다. | `Bid.auctionId`, `AuctionQueryControl`, `DataStore` | `bidsByAuction`, `findBidsByAuction()` |
-| NFR-P3 | 성능 | 특정 중개사의 입찰 이력은 전체 Bid 목록 순회 없이 `agentId` 기준으로 조회할 수 있어야 한다. | `Bid.agentId`, `DataStore` | `bidsByAgent`, `findBidsByAgent()` |
-| NFR-P4 | 성능/자원 | 검색 결과가 많을 때 필요한 개수만 반환할 수 있어야 한다. | `Property.region`, 검색 결과 | `findPropertyIdsByRegion(region, limit)` |
-| NFR-U1 | 사용성 | 콘솔 입력에서 잘못된 값이 들어와도 프로그램은 종료되지 않고 같은 단계에서 재입력을 받을 수 있어야 한다. | `client.ui`, `client.control` | `ConsoleInputReader`, 입력 retry 정책 |
-| NFR-U2 | 사용성 | 입력 오류 메시지는 어떤 필드가 왜 실패했는지 사용자가 이해할 수 있게 표시되어야 한다. | 콘솔 입력 흐름 | 필드명, 오류 종류, 허용 범위 출력 |
-| NFR-O1 | 관찰가능성 | 주요 유스케이스 실행 결과는 작업명, 행위자, 대상, 결과, 소요시간으로 추적할 수 있어야 한다. | `SearchPropertyManager`, `DataStore` | `OperationLog`, `operationLogs()` |
-| NFR-R1 | 신뢰성 | 조회 인덱스 결과는 외부 코드가 내부 저장 구조를 직접 변경하지 못하도록 방어적 복사로 반환되어야 한다. | `DataStore` 조회 메서드 | `new ArrayList<>(...)` 반환 |
-| NFR-M1 | 유지보수성 | 비기능 보강은 L3/L4의 `client/common/server` 구조를 뒤집지 않고 기존 책임 객체 안에 배치되어야 한다. | 전체 패키지 구조 | `l3l4sa` 내부에 보강 |
-| NFR-T1 | 테스트 용이성 | SA 적용 결과는 동일 데이터셋에서 L3+L4와 비교 실행할 수 있어야 한다. | benchmark 실행 코드 | `SaNfrBenchmark` |
-
----
-
-## 2. 대표 테스트 선정
-
-10개 NFR 중 발표에서 직접 실행 결과로 보여줄 항목은 6개로 선정한다.
-
-| 테스트 | 검증 NFR | 선정 이유 |
+| 유형 | 역할 | 예 |
 |---|---|---|
-| TEST-1 | NFR-P1 | 매물 검색 전체 순회와 지역 인덱스 조회 차이가 명확함 |
-| TEST-2 | NFR-P2 | 경매별 입찰 조회의 전체 순회 제거가 명확함 |
-| TEST-3 | NFR-P3 | 중개사별 입찰 이력 조회도 같은 인덱스 전략으로 개선됨 |
-| TEST-4 | NFR-P4 | 결과 상한을 통해 검색 결과 크기 제어를 보여줌 |
-| TEST-5 | NFR-O1 | 성능 수치 외에 처리 로그 구조가 생겼음을 보여줌 |
-| TEST-6 | NFR-U1/U2 | 입력 오류 복구와 사용자 메시지 개선을 보여줌 |
+| Data Dictionary | 값의 의미와 허용 범위를 명확히 한다. | 경매 마감기한, 수수료율, 낙찰 기준 가중치 |
+| Business Rule | 도메인에서 허용/금지되는 행위를 명확히 한다. | 중복 입찰 금지, 마감 이후 입찰 불가, 중복 낙찰 금지 |
+| NFR | 같은 기능을 어떤 품질로 수행할지 명확히 한다. | 인덱스 조회, 입력 복구, 처리 로그 |
 
-NFR-R1, NFR-M1, NFR-T1은 코드 구조와 테스트 가능성의 보조 근거로 분석에 포함한다.
+> 핵심 관찰 질문: SA를 추가하면 AI가 값 범위, 업무 규칙, 품질 기준을 더 명확한 코드 구조와 검증 로직으로 생성하는가?
 
 ---
 
-## 3. L3+L4 대비 기대 변화
+## 1. 최종 SA 항목 10개
 
-### 3.1 매물 검색 응답성
+| ID | 유형 | 항목 | L3/L4 연결 지점 | 코드 반영 기대 |
+|---|---|---|---|---|
+| DD-1 | Data Dictionary | 경매 마감기한 범위 | `AuctionCondition.bidDeadline`, `Auction.bidDeadline` | 현재 시각 + 1시간 이후, 최대 90일 이내 |
+| DD-2 | Data Dictionary | 중개 수수료율 범위 | `BidProposal.commissionRate` | 0~10%, 소수점 2자리 이하 |
+| DD-3 | Data Dictionary | 낙찰 기준 가중치 | `WinnerSelectionCriteria` | 두 가중치 합계 1.0, 우선순위별 최소 가중치 |
+| BR-1 | Business Rule | 동일 경매 중복 입찰 제한 | `SubmitBidManager`, `Bid.auctionId`, `Bid.agentId` | 동일 `auctionId + agentId` 활성 입찰 1건만 허용 |
+| BR-2 | Business Rule | 마감 이후 입찰 불가 | `SubmitBidManager`, `Auction` | `OPEN` 상태라도 `bidDeadline` 이후 입찰 거부 |
+| BR-3 | Business Rule | 낙찰은 마감 이후 1회만 가능 | `SelectWinnerManager`, `AuctionLifecycleControl` | 마감 전 낙찰 거부, `WINNER_SELECTED` 이후 중복 낙찰 거부 |
+| NFR-P1 | Performance | 매물 지역 검색 응답성 | `SearchPropertyManager`, `DataStore`, `Property.region` | 전체 순회 대신 `propertiesByRegion` 인덱스 조회 |
+| NFR-P2 | Performance | 경매/중개사별 입찰 조회 효율 | `AuctionQueryControl`, `DataStore`, `Bid.auctionId`, `Bid.agentId` | `bidsByAuction`, `bidsByAgent` 인덱스 조회 |
+| NFR-U1 | Usability | 콘솔 입력 오류 복구 | `client.ui`, `client.control` | 잘못된 입력 시 같은 단계 재입력, 필드명/허용 범위 안내 |
+| NFR-O1 | Observability | 처리 결과 로그 | `SearchPropertyManager`, `DataStore` | `OperationLog`로 작업명, 행위자, 대상, 결과, 소요시간 기록 |
+
+---
+
+## 2. Data Dictionary 상세
+
+### DD-1 경매 마감기한 범위
+
+| 속성 | 타입 | 의미 | 제약 |
+|---|---|---|---|
+| `AuctionCondition.bidDeadline` | datetime | 입찰을 받을 수 있는 마지막 시각 | 현재 시각보다 최소 1시간 이후, 최대 90일 이내 |
+
+코드 반영 기대:
+
+```text
+DataDictionaryValidator.requireFutureWithin(
+    bidDeadline,
+    Duration.ofHours(1),
+    Duration.ofDays(90),
+    AUCTION_DEADLINE_INVALID
+)
+```
+
+### DD-2 중개 수수료율 범위
+
+| 속성 | 타입 | 의미 | 제약 |
+|---|---|---|---|
+| `BidProposal.commissionRate` | Decimal | 중개사가 제안하는 서비스 수수료율 | 0 이상 10 이하, 소수점 2자리 이하 |
+
+코드 반영 기대:
+
+```text
+commissionRate >= 0
+commissionRate <= 10
+scale <= 2
+```
+
+### DD-3 낙찰 기준 가중치
+
+| 속성 | 타입 | 의미 | 제약 |
+|---|---|---|---|
+| `commissionRateWeight` | Decimal | 수수료율 점수 가중치 | 0~1 |
+| `marketingStrategyWeight` | Decimal | 마케팅 전략 점수 가중치 | 0~1 |
+| `priorityType` | Enum | 낙찰 우선 기준 | PRICE_FIRST, SERVICE_FIRST, BALANCED |
+
+추가 불변식:
+
+```text
+commissionRateWeight + marketingStrategyWeight = 1.0
+PRICE_FIRST이면 commissionRateWeight >= 0.6
+SERVICE_FIRST이면 marketingStrategyWeight >= 0.6
+BALANCED이면 각 가중치 0.4~0.6
+```
+
+---
+
+## 3. Business Rule 상세
+
+### BR-1 동일 경매 중복 입찰 제한
+
+```text
+동일 auctionId + agentId 조합에 대해 활성 입찰은 최대 1건만 허용한다.
+재제출 가능 상태가 아닌 기존 입찰이 있으면 새 입찰을 거부한다.
+```
+
+코드 반영 기대:
+
+- `SubmitBidManager.createOrUpdateBid()`에서 기존 입찰 조회
+- 기존 입찰이 있고 재제출 허용 상태가 아니면 `IllegalStateException`
+
+### BR-2 마감 이후 입찰 불가
+
+```text
+경매 상태가 OPEN이어도 현재 시각이 bidDeadline 이후이면 입찰을 저장하지 않는다.
+```
+
+코드 반영 기대:
+
+- `SubmitBidManager.validateAuctionOpen()`에서 `Auction.isClosedForBidding(now)` 확인
+- 마감된 경매는 입찰서 생성/저장/알림 생성 이전에 거부
+
+### BR-3 낙찰은 마감 이후 1회만 가능
+
+```text
+낙찰자 선정은 입찰 마감 이후에만 가능하다.
+이미 WINNER_SELECTED 상태인 경매는 다시 낙찰자를 선정할 수 없다.
+선택된 bidId는 해당 auctionId에 속한 입찰이어야 한다.
+```
+
+코드 반영 기대:
+
+- `SelectWinnerManager.validateAuctionClosed()`
+- `SelectWinnerManager.validateNoWinnerSelected()`
+- `SelectWinnerManager.markWinner()`
+
+---
+
+## 4. NFR 상세
+
+### NFR-P1 매물 지역 검색 응답성
 
 L3+L4 baseline:
 
@@ -71,12 +151,7 @@ propertiesByRegion.computeIfAbsent(region, ...).add(property)
 findPropertyIdsByRegion(region)
 ```
 
-의미:
-
-- L3+L4는 `Property`와 `SearchPropertyManager`를 분리했지만, 검색 방식은 전체 순회에 머문다.
-- SA는 "검색 응답성"을 명시하여 `DataStore`가 조회 인덱스를 함께 유지하도록 만든다.
-
-### 3.2 경매/중개사별 입찰 조회 효율
+### NFR-P2 경매/중개사별 입찰 조회 효율
 
 L3+L4 baseline:
 
@@ -94,182 +169,63 @@ findBidsByAuction(auctionId)
 findBidsByAgent(agentId)
 ```
 
-의미:
-
-- L3+L4는 `AuctionQueryControl`을 만들었지만, 조회 비용에 대한 정책은 없다.
-- SA는 `auctionId`, `agentId`가 단순 속성이 아니라 조회 기준이라는 점을 명시한다.
-
-### 3.3 결과 상한
-
-L3+L4 baseline:
+### NFR-U1 콘솔 입력 오류 복구
 
 ```text
-전체 검색 결과를 만든 뒤 필요한 만큼 사용
+잘못된 숫자 입력 -> 오류 원인 안내 -> 같은 단계 재입력 -> 정상 값 수락
 ```
 
-SA 적용 후:
+코드 반영 기대:
+
+- `ConsoleInputReader.readIntWithRetry()`
+- 필드명, 오류 종류, 허용 범위 출력
+
+### NFR-O1 처리 결과 로그
 
 ```text
-findPropertyIdsByRegion(region, limit)
+OperationLog(operationName, actorId, targetId, result, elapsedNanos)
 ```
 
-의미:
+코드 반영 기대:
 
-- 검색 결과가 많아지는 상황에서 결과 크기 제한을 조회 책임에 포함한다.
-- 이는 대규모 서비스 성능 보장이 아니라, toy dataset에서도 관찰 가능한 자원 사용 정책이다.
-
-### 3.4 콘솔 입력 오류 복구성
-
-L3+L4 baseline:
-
-```text
-Integer.parseInt(input)
-// 잘못된 입력이면 NumberFormatException 발생
-```
-
-SA 적용 후:
-
-```text
-ConsoleInputReader.readIntWithRetry("평점", inputs, 1, 5)
-```
-
-의미:
-
-- 새 기능을 추가하는 것이 아니라 기존 콘솔 입력 흐름의 실패 처리를 구체화한다.
-- 사용자는 잘못된 값을 입력해도 같은 단계에서 다시 시도할 수 있다.
-
-### 3.5 처리 결과 관찰가능성
-
-L3+L4 baseline:
-
-```text
-검색 결과만 반환
-```
-
-SA 적용 후:
-
-```text
-OperationLog("SEARCH_PROPERTY", buyerId, region, "SUCCESS(...)", elapsedNanos)
-```
-
-의미:
-
-- 기능 결과뿐 아니라 어떤 작업이 어떤 대상에 대해 수행되었는지 추적할 수 있다.
-- 발표에서는 `operationLogs().size()`와 로그 필드로 SA 적용 여부를 확인할 수 있다.
+- `SearchPropertyManager.search()`에서 처리 결과 로그 기록
+- `DataStore.operationLogs()`로 확인 가능
 
 ---
 
-## 4. SA 적용 프롬프트
+## 5. 테스트 후보
 
-```text
-너는 COMET UML 기반 AI-Driven 개발 방법론의 L3+L4+Specification Augmentation 단계에 따라 Java 코드를 생성한다.
+최종 발표 테스트는 별도로 선정한다. 현재 코드에서 바로 확인 가능한 후보는 다음과 같다.
 
-입력 산출물:
-1. L3 Static Modeling 문서
-2. L4 Object Structuring 문서
-3. Specification Augmentation - NFR 문서
+| 후보 | 검증 가능 SA |
+|---|---|
+| 경매 마감기한 검증 | DD-1 |
+| 수수료율 범위 검증 | DD-2 |
+| 낙찰 기준 가중치 검증 | DD-3 |
+| 중복 입찰 거부 | BR-1 |
+| 마감 이후 입찰 거부 | BR-2 |
+| 중복 낙찰 거부 | BR-3 |
+| 매물 지역 검색 성능 비교 | NFR-P1 |
+| 경매/중개사별 입찰 조회 성능 비교 | NFR-P2 |
+| 콘솔 입력 오류 복구 | NFR-U1 |
+| OperationLog 생성 확인 | NFR-O1 |
 
-요구사항:
-- 기존 L3+L4 코드 구조(client/common/server)는 유지한다.
-- 새 유스케이스를 추가하지 않고, 기존 검색/조회/입력/처리 추적 흐름에 비기능 요구사항을 반영한다.
-- NFR-P1: 지역 조건 매물 검색은 전체 매물 순회 대신 지역별 인덱스 조회를 사용할 수 있게 한다.
-- NFR-P2: 경매별 입찰 조회는 auctionId 인덱스 조회를 사용할 수 있게 한다.
-- NFR-P3: 중개사별 입찰 이력 조회는 agentId 인덱스 조회를 사용할 수 있게 한다.
-- NFR-P4: 검색 결과가 많을 때 필요한 개수만 제한 반환할 수 있게 한다.
-- NFR-U1/U2: 콘솔 입력 오류는 프로그램 종료가 아니라 같은 단계 재입력으로 복구하고, 필드명과 허용 범위를 포함한 메시지를 출력한다.
-- NFR-O1: 주요 유스케이스 성공/실패 결과는 OperationLog로 기록한다.
-- NFR-R1: 조회 결과는 내부 인덱스를 직접 노출하지 않도록 방어적 복사로 반환한다.
-- NFR-M1: L3/L4의 client/common/server 구조를 유지한다.
-- NFR-T1: L3+L4 baseline과 SA 결과를 같은 데이터셋에서 비교 실행할 수 있는 테스트 코드를 제공한다.
-- 외부 DB나 프레임워크를 추가하지 않고 순수 Java in-memory 구조로 차이를 관찰할 수 있게 한다.
-
-관찰 목표:
-- L3+L4 코드 대비 전체 순회가 인덱스 조회로 바뀌는지 확인한다.
-- 같은 테스트 데이터에서 L3+L4와 SA의 검색/조회 시간이 콘솔에 비교 출력되는지 확인한다.
-- 입력 오류 복구와 처리 로그가 코드 구조로 분리되는지 확인한다.
-```
-
----
-
-## 5. 비교 테스트 계획
-
-테스트 실행 클래스:
+벤치마크 실행 클래스:
 
 ```text
 src/main/java/com/zippt/benchmark/SaNfrBenchmark.java
 ```
 
-Maven이 없는 환경에서는 JDK 17로 직접 컴파일 후 실행한다.
-
-```powershell
-$files = Get-ChildItem -Recurse -Filter *.java src\main\java
-New-Item -ItemType Directory -Force out\javac | Out-Null
-& 'C:\Program Files\Java\jdk-17\bin\javac.exe' -encoding UTF-8 -d out\javac $files.FullName
-& 'C:\Program Files\Java\jdk-17\bin\java.exe' -Xmx2g -cp out\javac com.zippt.benchmark.SaNfrBenchmark 1000000
-```
-
-### 5.1 TEST-1 매물 지역 검색
-
-| 항목 | 내용 |
-|---|---|
-| 목적 | L3+L4 전체 순회와 SA 지역 인덱스 조회 비교 |
-| 데이터 | N개 매물 중 마지막 1건만 `TARGET_REGION` |
-| L3+L4 | `properties().stream().filter(...)` |
-| SA | `findPropertyIdsByRegion(region)` |
-
-### 5.2 TEST-2 경매별 입찰 조회
-
-| 항목 | 내용 |
-|---|---|
-| 목적 | L3+L4 전체 Bid 순회와 SA auctionId 인덱스 조회 비교 |
-| 데이터 | N개 입찰 중 마지막 1건만 `auction-target` |
-| L3+L4 | `bids().stream().filter(...)` |
-| SA | `findBidsByAuction(auctionId)` |
-
-### 5.3 TEST-3 중개사별 입찰 이력 조회
-
-| 항목 | 내용 |
-|---|---|
-| 목적 | L3+L4 전체 Bid 순회와 SA agentId 인덱스 조회 비교 |
-| 데이터 | N개 입찰 중 마지막 1건만 `agent-target` |
-| L3+L4 | `bids().stream().filter(...)` |
-| SA | `findBidsByAgent(agentId)` |
-
-### 5.4 TEST-4 검색 결과 상한
-
-| 항목 | 내용 |
-|---|---|
-| 목적 | 많이 매칭되는 지역에서 필요한 개수만 반환하는지 비교 |
-| 데이터 | `REGION_7`에 다수 매칭, limit 20 |
-| L3+L4 | 전체 순회 후 limit |
-| SA | 지역 인덱스에서 limit 적용 |
-
-### 5.5 TEST-5 처리 로그
-
-| 항목 | 내용 |
-|---|---|
-| 목적 | 유스케이스 결과가 OperationLog로 기록되는지 확인 |
-| 확인값 | operationName, actorId, targetId, result, elapsedNanos |
-
-### 5.6 TEST-6 콘솔 입력 오류 복구
-
-| 항목 | 내용 |
-|---|---|
-| 목적 | 잘못된 콘솔 입력에 대한 복구 정책 비교 |
-| 입력 | `abc`, `0`, `3` |
-| L3+L4 | `NumberFormatException` 발생 |
-| SA | 오류 메시지 출력 후 같은 단계 재입력, 최종 `3` 수락 |
+현재 벤치마크는 NFR-P1, NFR-P2, NFR-U1, NFR-O1 중심으로 콘솔 비교를 제공한다. DD/BR 항목은 발표 방향이 확정되면 별도 테스트 후보로 추가할 수 있다.
 
 ---
 
-## 6. Part C 분석에서 사용할 관찰 항목
+## 6. 분석 관점
 
-| 관찰 항목 | 측정 방법 |
+| 관찰 항목 | 해석 |
 |---|---|
-| 검색 시간 변화 | `SaNfrBenchmark` TEST-1 elapsed time 비교 |
-| 입찰 조회 시간 변화 | `SaNfrBenchmark` TEST-2, TEST-3 elapsed time 비교 |
-| 결과 상한 반영 여부 | TEST-4 콘솔 메시지와 결과 건수 확인 |
-| 입력 오류 복구 여부 | TEST-6 콘솔 메시지와 최종 입력값 확인 |
-| 관찰가능성 반영 여부 | TEST-5 `OperationLog` 필드 확인 |
-| 구조 유지 여부 | `l3l4sa`가 기존 `client/common/server` 구조 안에서 확장되었는지 확인 |
+| Data Dictionary 반영 | AI가 일반적인 값 추론 대신 명시된 범위/정밀도를 코드에 반영하는지 확인 |
+| Business Rule 반영 | AI가 도메인 행위의 허용/금지 조건을 Manager/Entity 흐름에 반영하는지 확인 |
+| NFR 반영 | 기능 결과는 유지하면서 조회 방식, 입력 복구, 로그 구조가 달라지는지 확인 |
+| L3/L4 구조 유지 | SA가 새 아키텍처를 만들지 않고 기존 객체 책임 안에 보강되는지 확인 |
 

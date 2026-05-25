@@ -41,20 +41,20 @@ description: Use when working on the ZIP-PT AI-Driven COMET UML assignment, espe
 
 ## Current SA focus
 
-The current SA is NFR-based. It defines 10 NFRs and uses 6 representative console tests for presentation evidence:
+The current SA combines Data Dictionary, Business Rule, and NFR items into 10 augmentation items:
 
+- DD-1: auction deadline range, current time + 1 hour through 90 days.
+- DD-2: commission rate range, 0-10% with max scale 2.
+- DD-3: winner criteria weights, total 1.0 and priority-specific thresholds.
+- BR-1: one active bid per auction and agent.
+- BR-2: no bid submission after deadline.
+- BR-3: winner selection only after close and only once.
 - NFR-P1: property search responsiveness through `propertiesByRegion`.
-- NFR-P2: auction/bid lookup efficiency through `bidsByAuction` and `bidsByAgent`.
-- NFR-P3: agent bid-history lookup efficiency through `bidsByAgent`.
-- NFR-P4: bounded search results through `findPropertyIdsByRegion(region, limit)`.
+- NFR-P2: auction/agent bid lookup efficiency through `bidsByAuction` and `bidsByAgent`.
 - NFR-U1: console input recovery through `ConsoleInputReader`.
-- NFR-U2: clear input error messages with field name, reason, and allowed range.
 - NFR-O1: operation observability through `OperationLog`.
-- NFR-R1: defensive copies for indexed lookup results.
-- NFR-M1: preserving the L3/L4 package structure while augmenting behavior.
-- NFR-T1: repeatable L3+L4 vs SA comparison through `SaNfrBenchmark`.
 
-Use this framing: L3/L4 created responsibility structure; SA added quality criteria that changed lookup paths, input recovery, and observability.
+Use this framing: L3/L4 created responsibility structure; SA added value ranges, domain action rules, and quality criteria.
 
 ## Verification
 
