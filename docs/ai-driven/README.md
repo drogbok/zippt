@@ -17,6 +17,7 @@
 - `src/main/java/com/zippt/l3l4`: L3+L4 명세 기반 생성 코드
 - `src/main/java/com/zippt/l3l4sa`: L3+L4+SA 명세 기반 생성 코드
 - `src/main/java/com/zippt/benchmark/SaNfrBenchmark.java`: L3+L4와 SA의 NFR 적용 결과를 콘솔에서 비교하는 실행 코드
+- `src/main/java/com/zippt/benchmark/ConcurrencyBenchmark.java`: L2, L3+L4, L3+L4+SA의 동시 중복 입찰 처리 결과를 비교하는 실행 코드
 
 ## 단계별 의미
 
@@ -40,6 +41,18 @@
 - NFR-C2 Concurrency: 동시 낙찰 선택 요청에서도 최종 낙찰은 정확히 1회만 성공
 
 요약하면 L3/L4가 구조와 책임을 만든다면, SA는 그 책임을 어떤 품질 기준으로 수행해야 하는지 보여준다.
+
+## 동시성 확장 비교
+
+최종 발표에서 운영 서비스에 가까운 임팩트를 보여주기 위해, L2부터 존재했던 동시 입찰 시나리오를 별도 벤치마크로 비교한다.
+
+```text
+java ... com.zippt.benchmark.ConcurrencyBenchmark 100
+```
+
+- L2 baseline: 유스케이스 흐름은 있으나 중복 검증과 저장이 같은 임계 영역에 묶이지 않아 동시 요청에서 중복 입찰이 남을 수 있다.
+- L3+L4: `SubmitBidManager` 책임으로 `auctionId` 단위 처리 지점이 구조화된다.
+- L3+L4+SA: 동시 요청 원자성을 품질 기준으로 명시하고, 성공 1건/거부 N-1건을 검증한다.
 
 ## 브랜치 기준
 

@@ -242,6 +242,20 @@ SA:
 
 현재 `SaNfrBenchmark`는 NFR-P1, NFR-P2, NFR-C1, NFR-C2 중심으로 콘솔 비교를 제공한다. DD/BR 항목은 발표에서 선택할 테스트가 확정되면 별도 테스트로 추가하면 된다.
 
+추가로 `ConcurrencyBenchmark`는 L2, L3+L4, L3+L4+SA를 같은 동시 입찰 시나리오로 비교한다.
+
+```text
+java ... com.zippt.benchmark.ConcurrencyBenchmark 100
+```
+
+100개 동시 요청 기준 관찰 결과:
+
+| 단계 | 성공 | 거부 | 저장된 동일 입찰 | 해석 |
+|---|---:|---:|---:|---|
+| L2 baseline | 100 | 0 | 100 | check-then-save 경쟁 조건으로 중복 입찰 99건 발생 |
+| L3+L4 | 1 | 99 | 1 | Manager 책임과 auctionId 단위 lock으로 중복 저장 방지 |
+| L3+L4+SA | 1 | 99 | 1 | 동시 요청 원자성이 품질 기준으로 명시되어 검증 가능 |
+
 ---
 
 ## 7. 결과 해석 주의점

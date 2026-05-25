@@ -38,6 +38,7 @@ description: Use when working on the ZIP-PT AI-Driven COMET UML assignment, espe
 - `src/main/java/com/zippt/l3l4`: L3+L4 generated code.
 - `src/main/java/com/zippt/l3l4sa`: L3+L4+SA generated code.
 - `src/main/java/com/zippt/benchmark/SaNfrBenchmark.java`: console benchmark comparing L3+L4 and SA.
+- `src/main/java/com/zippt/benchmark/ConcurrencyBenchmark.java`: console benchmark comparing L2, L3+L4, and SA under concurrent duplicate bid requests.
 
 ## Current SA focus
 
@@ -65,6 +66,13 @@ $files = Get-ChildItem -Recurse -Filter *.java src\main\java
 New-Item -ItemType Directory -Force out\javac | Out-Null
 & 'C:\Program Files\Java\jdk-17\bin\javac.exe' -encoding UTF-8 -d out\javac $files.FullName
 & 'C:\Program Files\Java\jdk-17\bin\java.exe' -Xmx2g -cp out\javac com.zippt.benchmark.SaNfrBenchmark 1000000
+& 'C:\Program Files\Java\jdk-17\bin\java.exe' -Xmx2g -cp out\javac com.zippt.benchmark.ConcurrencyBenchmark 100
 ```
 
 Do not present benchmark numbers as production performance guarantees. Present them as controlled toy-dataset evidence that SA changed code structure and execution path.
+
+For the impact-focused presentation, use this concurrency framing:
+
+- L2 may generate some synchronized code, but the check-then-save duplicate-bid path is still vulnerable when validation and persistence are not in the same critical section.
+- L3/L4 moves the responsibility into `SubmitBidManager` and `DataStore.lockFor()`.
+- SA makes the quality target explicit: under concurrent duplicate bid requests, exactly one request succeeds and the rest are rejected.

@@ -96,6 +96,12 @@ SA 적용 후에는 다음 코드 변화가 생겼다.
 src/main/java/com/zippt/benchmark/SaNfrBenchmark.java
 ```
 
+동시성 확장 비교 실행 클래스:
+
+```text
+src/main/java/com/zippt/benchmark/ConcurrencyBenchmark.java
+```
+
 검증된 100,000건 실행 결과:
 
 | 테스트 | L3+L4 | SA | 요약 |
@@ -106,6 +112,14 @@ src/main/java/com/zippt/benchmark/SaNfrBenchmark.java
 | 검색 결과 상한 보조 확인 | 5.356 ms | 0.717 ms | 약 7.5배 차이 |
 | 동시 중복 입찰 | 동시 요청 20건 | 성공 1건, 거부 19건 | 원자성 확인 |
 | 동시 낙찰 선택 | 동시 요청 20건 | 성공 1건, 거부 19건 | 일관성 확인 |
+
+별도 `ConcurrencyBenchmark 100` 실행 결과:
+
+| 단계 | 성공 | 거부 | 저장된 동일 입찰 | 해석 |
+|---|---:|---:|---:|---|
+| L2 baseline | 100 | 0 | 100 | 중복 검증과 저장이 같은 임계 영역에 묶이지 않아 race condition 노출 |
+| L3+L4 | 1 | 99 | 1 | `SubmitBidManager`에서 auctionId 단위 처리 지점 구조화 |
+| L3+L4+SA | 1 | 99 | 1 | 동시 요청 원자성을 품질 기준으로 명시하고 검증 |
 
 성능 수치는 실행 환경에 따라 달라질 수 있으므로, 발표에서는 실행 콘솔 결과를 기준으로 최신 값을 사용한다.
 

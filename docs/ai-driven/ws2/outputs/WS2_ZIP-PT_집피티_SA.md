@@ -229,9 +229,18 @@ findBidsByAgent(agentId)
 
 ```text
 src/main/java/com/zippt/benchmark/SaNfrBenchmark.java
+src/main/java/com/zippt/benchmark/ConcurrencyBenchmark.java
 ```
 
 현재 벤치마크는 NFR-P1, NFR-P2, NFR-C1, NFR-C2 중심으로 콘솔 비교를 제공한다. DD/BR 항목은 발표 방향이 확정되면 별도 테스트 후보로 추가할 수 있다.
+
+`ConcurrencyBenchmark`는 L2 baseline, L3+L4, L3+L4+SA를 같은 동시 입찰 시나리오로 실행하여 다음 차이를 보여준다.
+
+| 단계 | 관찰 포인트 |
+|---|---|
+| L2 baseline | 중복 검증과 저장이 같은 임계 영역에 묶이지 않아 동시 요청에서 중복 입찰이 남을 수 있음 |
+| L3+L4 | `SubmitBidManager`가 `auctionId` 단위 처리 지점을 구조화 |
+| L3+L4+SA | 동시 요청 원자성을 품질 기준으로 명시하고 성공 1건/거부 N-1건을 검증 |
 
 ---
 
